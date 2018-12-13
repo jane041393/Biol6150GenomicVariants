@@ -1,0 +1,111 @@
+---
+title: "Variant Analysis"
+author: "Jialin Ma"
+date: "December 12, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+
+```{r}
+suppressPackageStartupMessages({
+    library(VariantAnnotation)
+    library(BSgenome.Hsapiens.UCSC.hg38)
+    library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+})
+```
+
+## Read the data
+
+```{r}
+vcf <- readVcf(VcfFile("HG00698_ERR031924.vcf.gz"))
+```
+
+## Predict coding changes
+
+```{r}
+suppressWarnings({
+    variants <- predictCoding(vcf, TxDb.Hsapiens.UCSC.hg38.knownGene, BSgenome.Hsapiens.UCSC.hg38)
+})
+colnames(mcols(variants))
+table(variants$CONSEQUENCE)
+```
+
+## Select non-synonymous substitution variants
+
+```{r}
+variants <- variants[variants$CONSEQUENCE == "nonsynonymous"]
+variants <- variants[width(variants) == 1]
+length(variants)
+```
+
+## Annotate RSID
+
+```{r eval=FALSE, include=FALSE}
+library(SNPlocs.Hsapiens.dbSNP151.GRCh38)
+annotate_rsid <- function(loc) {
+    seqlevelsStyle(loc) <- seqlevelsStyle(SNPlocs.Hsapiens.dbSNP151.GRCh38)[1]
+    #stopifnot(length(unique(seqnames(loc))) == 1)
+    rsid <- vector("list", length(loc))
+    for (i in seq_along(loc)) {
+        rsid[[i]] <- snpsByOverlaps(SNPlocs.Hsapiens.dbSNP151.GRCh38, range(loc[i]), type = "equal")
+    }
+    
+    #snps <- snpsByOverlaps(SNPlocs.Hsapiens.dbSNP151.GRCh38, range(loc))
+    #
+    #hits <- findMatches(ranges(loc), ranges(snps))
+    #
+    #q_hits <- queryHits(hits)
+    #tmp <- split(snps$RefSNP_id[subjectHits(hits)], q_hits)
+    #rsid[as.integer(names(tmp))] <- tmp
+    rsid
+}
+annotate_rsid(variants)
+```
+
+## Predict damage level with SIFT and PolyPhen databases
+
+SIFT (Sorting Intolerant From Tolerant) and PolyPhen (Polymorphism Phenotyping)
+are methods that predict the impact of amino acid substitution on a human protein.
+PolyPhen uses sequence-based features and structural information characterizing
+the substitution to make predictions about the structure and function of the protein.
+
+Here we retrieve prediction of PolyPhen database from rsid.
+
+```{r eval=FALSE, include=FALSE}
+## Temporarily use results from wAnnovar, which contains snpid
+variants <- readr::read_csv("ranked_variants.csv")
+variants <- variants
+library(PolyPhen.Hsapiens.dbSNP131)
+```
+
+## Select a specific variant to analyze
+
+```{r}
+sel.variant <- readr::read_csv("wAnnovar_results.csv")
+sel.variant <- sel.variant[c("Chr", "Start", "End", "Ref", "Alt", "Gene.refgene", "dbSNP")]
+sel.variant <- as(sel.variant, "GRanges")
+sel.variant$Alt <- DNAStringSet((sel.variant$Alt))
+sel.variant$Ref <- DNAStringSet((sel.variant$Ref))
+sel.variant <- sel.variant[start(sel.variant) == 154532257, ]
+names(sel.variant) <- sel.variant$dbSNP
+sel.variant$dbSNP <- NULL
+sel.variant$Gene <- sel.variant$Gene.refgene
+sel.variant$Gene.refgene <- NULL
+sel.variant
+predictCoding(sel.variant, TxDb.Hsapiens.UCSC.hg38.knownGene,
+              BSgenome.Hsapiens.UCSC.hg38, varAllele = sel.variant$Alt)
+```
+
+
+```{r}
+library(PolyPhen.Hsapiens.dbSNP131)
+select(PolyPhen.Hsapiens.dbSNP131, keys=names(sel.variant), cols=columns(PolyPhen.Hsapiens.dbSNP131))
+```
+
